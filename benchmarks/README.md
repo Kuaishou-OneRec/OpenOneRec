@@ -103,16 +103,14 @@ Log files are located at:
 
 ## Evaluation Tasks
 
-| Task Name | Source | Dataset Size | Description |
-|-----------|--------|--------------|-------------|
-| label_cond | Kuaishou Internal | 34,916 | Predict next video given specified consumption behavior |
+| Task Name | Source | Description |
+|-----------|--------|-------------|
+| label_cond | Kuaishou Internal | 34,891 | Predict next video given specified consumption behavior |
 | video | Kuaishou Internal | 38,781  | Next video prediction |
-| product | Kuaishou Internal | 27,910 | Predict next clicked product |
-| ad | Kuaishou Internal | 27,677 | Predict next clicked advertisement |
+| product | Kuaishou Internal | 28,536 | Predict next clicked product |
+| ad | Kuaishou Internal | 30,131 | Predict next clicked advertisement |
 | interactive | Kuaishou Internal | 1,000 | Predict next interacted video |
 | label_pred | Kuaishou Internal | 346,190 | Predict user engagement with video content |
-| item_understand | Kuaishou Internal | 500 | Video SID to Caption generation task |
+| item_understand | Kuaishou Internal | 474 | Video SID to Caption generation task |
 | rec_reason | Kuaishou Internal | 300 | Recommendation reason inference |
-
-
 
