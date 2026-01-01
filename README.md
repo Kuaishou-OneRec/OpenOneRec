@@ -10,7 +10,7 @@
     <a href="https://github.com/Kuaishou-OneRec/OpenOneRec">
         <img alt="GitHub Code" src="https://img.shields.io/badge/GitHub-OpenOneRec-black?logo=github" />
     </a>
-     <a href="https://arxiv.org/pdf/2512.24762">
+     <a href="https://arxiv.org/abs/2512.24762">
         <img alt="Paper" src="https://img.shields.io/badge/Paper-ArXiv-b31b1b?logo=arxiv" />
     </a>
     <a href="#license">
@@ -31,7 +31,7 @@ To address this, we introduce a unified framework that comprises:
 
 ## 🔥 News
 
-* **[2026.1.1]** 📑 The technical report has been released.
+* **[2026.1.1]** 📑 **The technical report** has been released.
 * **[2026.1.1]** 🎉 **OneRec-Foundation** models (1.7B, 8B) are now available on Hugging Face!
 * **[2026.1.1]** 🚀 **RecIF-Bench** dataset and evaluation scripts are open-sourced.
 
