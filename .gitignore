@@ -68,7 +68,7 @@ ckpt/
 
 # Data
 *.parquet
-*.csv
+# *.csv
 *.json
 *.jsonl
 !pyproject.toml
