@@ -4,13 +4,10 @@ The OpenOneRec pretraining module is based on the Qwen3 architecture, supporting
 
 > **⚠️ Important Notice**
 >
-> The distributed training in this module **relies on MPI (Message Passing Interface)** for multi-node communication. The current training scripts use `mpirun` to launch distributed training, requiring proper MPI environment configuration (e.g., OpenMPI) and hostfile setup.
+> The distributed training in this module supports **torchrun (recommended)** and **MPI (legacy)** for multi-node communication. The torchrun scripts live in `examples/*_torchrun.sh` and rely on standard PyTorch environment variables (`RANK`, `WORLD_SIZE`, `LOCAL_RANK`), while the legacy scripts use `mpirun` and MPI hostfiles.
 >
 > To simplify environment configuration and improve reproducibility, we plan to release in future versions:
-> - **Pre-configured Docker/Apptainer images**: Including all necessary dependencies and MPI environment
-> - **torchrun-based training scripts**: Providing an easier way to launch distributed training
->
-> Before the images and torchrun versions are released, please ensure your environment has MPI properly installed and configured.
+> - **Pre-configured Docker/Apptainer images**: Including all necessary dependencies and a ready-to-use distributed environment
 
 
 ## Quick Start
@@ -21,7 +18,7 @@ The OpenOneRec pretraining module is based on the Qwen3 architecture, supporting
 - **Software**:
   - Python 3.8+
   - PyTorch (with FSDP and distributed training support)
-  - OpenMPI or compatible MPI implementation
+  - OpenMPI (only if you use the legacy `mpirun` scripts)
   - NCCL (for GPU communication)
 - **Data**: Training data converted to Parquet format (refer to `../data/README.md`)
 - **Model**: Qwen3 base model (HuggingFace format)
@@ -32,7 +29,7 @@ First, configure the training environment:
 
 ```bash
 # Set environment variables
-source set_env.sh
+source set_env_torchrun.sh
 ```
 
 This script sets necessary environment variables, including Python path, CUDA path, etc.
@@ -100,11 +97,11 @@ Training scripts are located in the `examples/` directory, and data configuratio
 Stage1 is mainly used for training itemic embeddings, typically freezing LLM parameters and only optimizing the embedding layer.
 
 ```bash
-# Edit examples/pretrain_stg1.sh to set model path, output path, and other parameters
-bash examples/pretrain_stg1.sh
+# Edit examples/pretrain_stg1_torchrun.sh to set model path, output path, and other parameters
+bash examples/pretrain_stg1_torchrun.sh
 ```
 
-Main training parameters (configured in `pretrain_stg1.sh`):
+Main training parameters (configured in `pretrain_stg1_torchrun.sh`):
 - `--dataset_config examples/dataset_config/stg1.json`: Specify data configuration
 - `--freeze_llm`: Freeze LLM parameters
 - `--start_optimize_embedding_index 151669`: Start optimizing embeddings from the specified token ID
@@ -118,12 +115,12 @@ Main training parameters (configured in `pretrain_stg1.sh`):
 Stage2 is used for full-parameter pretraining to further optimize model performance. This stage unfreezes all model parameters and performs co-pretraining on a mixed domain of recommendation data and general text data.
 
 ```bash
-# Edit examples/pretrain_stg2.sh to set model path, output path, and other parameters
+# Edit examples/pretrain_stg2_torchrun.sh to set model path, output path, and other parameters
 # MODEL_DIR should point to the converted hf model path from Stage1 training output
-bash examples/pretrain_stg2.sh
+bash examples/pretrain_stg2_torchrun.sh
 ```
 
-Main training parameters (configured in `pretrain_stg2.sh`):
+Main training parameters (configured in `pretrain_stg2_torchrun.sh`):
 - `--dataset_config examples/dataset_config/pretrain.json`: Specify data configuration (including recommendation data and general text data)
 - `--model_dir`: Converted model path from Stage1 output
 - `--output_dir`: Model output path
@@ -136,12 +133,12 @@ Main training parameters (configured in `pretrain_stg2.sh`):
 SFT (Supervised Fine-Tuning) is used for instruction fine-tuning to improve model performance on specific tasks. This stage performs supervised learning on instruction-following data, enabling the model to better understand and execute recommendation-related instructions.
 
 ```bash
-# Edit examples/posttrain_sft.sh to set model path, output path, and other parameters
+# Edit examples/posttrain_sft_torchrun.sh to set model path, output path, and other parameters
 # MODEL_DIR should point to the converted hf model path from Stage2 training output
-bash examples/posttrain_sft.sh
+bash examples/posttrain_sft_torchrun.sh
 ```
 
-Main training parameters (configured in `posttrain_sft.sh`):
+Main training parameters (configured in `posttrain_sft_torchrun.sh`):
 - `--dataset_config examples/dataset_config/sft.json`: Specify SFT data configuration
 - `--model_dir`: Converted model path from Stage2 output
 - `--output_dir`: Model output path
@@ -296,11 +293,10 @@ To resume training from a checkpoint, add the following to the training script:
 ## Notes
 
 
-1. **MPI Environment**:
-   - Training scripts use `mpirun` for multi-node distributed training, requiring OpenMPI or compatible MPI implementation
-   - Proper hostfile configuration is required (e.g., `/etc/mpi/hostfile`), with one node address per line
-   - Ensure passwordless SSH access between all nodes
-   - Training scripts automatically read environment variables like `OMPI_COMM_WORLD_RANK`, `OMPI_COMM_WORLD_SIZE`, etc.
+1. **Distributed Environment**:
+   - Torchrun scripts use `torchrun` and standard PyTorch env vars (`RANK`, `WORLD_SIZE`, `LOCAL_RANK`)
+   - For multi-node torchrun, ensure a shared hostfile (e.g., `/etc/mpi/hostfile`) and a consistent `MASTER_ADDR:MASTER_PORT`
+   - Legacy MPI scripts use `mpirun` with `OMPI_COMM_WORLD_*` environment variables
 
 2. **Data Format**:
    - Ensure training data conforms to Parquet format specifications, refer to `../data/README.md`

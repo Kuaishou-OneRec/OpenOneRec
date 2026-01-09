@@ -421,12 +421,23 @@ def initialize_distributed() -> Tuple[int, int, int]:
     Returns:
         Tuple of (rank, world_size, local_rank)
     """
-    rank = int(os.environ.get("OMPI_COMM_WORLD_RANK", 0))
-    world_size = int(os.environ.get("OMPI_COMM_WORLD_SIZE", 0))
-    local_rank = int(os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", 0))
+    rank_env = os.environ.get("RANK")
+    world_size_env = os.environ.get("WORLD_SIZE")
+    local_rank_env = os.environ.get("LOCAL_RANK")
+
+    if rank_env is None and "OMPI_COMM_WORLD_RANK" in os.environ:
+        rank_env = os.environ.get("OMPI_COMM_WORLD_RANK")
+        world_size_env = os.environ.get("OMPI_COMM_WORLD_SIZE")
+        local_rank_env = os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK")
+
+    rank = int(rank_env or 0)
+    world_size = int(world_size_env or 1)
+    local_rank = int(local_rank_env or 0)
     
     torch.cuda.set_device(local_rank)
     torch.distributed.init_process_group(
+        backend="nccl",
+        init_method="env://",
         rank=rank,
         world_size=world_size,
         timeout=PROCESS_GROUP_TIMEOUT
