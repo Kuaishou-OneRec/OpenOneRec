@@ -1,42 +1,151 @@
-script_dir=$(cd $(dirname $0); pwd)
+#!/bin/bash
+# Multi-node Ray Cluster Initialization Script
+# Usage: bash init_ray_cluster.sh [--stop]
+#   --stop: Stop Ray on all nodes instead of starting
 
-parent_dir=$(dirname ${script_dir})
-head_node_addr=$(awk 'NR==1 {print $1}' /etc/mpi/hostfile)
-port=6381
-echo "script dir: $script_dir"
-echo "parent dir: $parent_dir"
-echo "head_node_addr: $head_node_addr"
+set -e
 
-# We get unique nodes from the hostfile. `sort -u` changes order, so we use `awk`
-# to get unique nodes while preserving the original order from the file.
-ALL_NODES=$(awk '!a[$1]++ {print $1}' /etc/mpi/hostfile)
+SCRIPT_DIR=$(cd $(dirname $0); pwd)
+PROJECT_DIR=${SCRIPT_DIR}
 
-log_dir="./tmp_ray"
-mkdir -p "${log_dir}"
+# Configuration
+PORT=${RAY_PORT:-6379}
+HOSTFILE=${HOSTFILE:-"/etc/mpi/hostfile"}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-"benchmark"}
+LOG_DIR="${PROJECT_DIR}/logs/ray"
 
-echo "Will start Ray on the following nodes:"
-echo "${ALL_NODES}"
-echo ""
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-rank=0
-for node in ${ALL_NODES}; do
-  echo "--> Sending init command to ${node} (rank ${rank})..."
-  if [[ $rank -eq 0 ]]; then
-    ssh -n ${node} "bash ${parent_dir}/scripts/init_ray.sh ${head_node_addr} ${port} ${rank}" > "${log_dir}/ray_init_log.${node}.txt" 2>&1
-  else
-    ssh -n ${node} "bash ${parent_dir}/scripts/init_ray.sh ${head_node_addr} ${port} ${rank}" > "${log_dir}/ray_init_log.${node}.txt" 2>&1 &
-  fi
-  rank=$((rank + 1))
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Generate conda initialization command that works with both anaconda and miniconda
+get_conda_init_cmd() {
+    cat << 'EOF'
+for conda_sh in /root/miniconda3/etc/profile.d/conda.sh \
+                /root/anaconda3/etc/profile.d/conda.sh \
+                $HOME/miniconda3/etc/profile.d/conda.sh \
+                $HOME/anaconda3/etc/profile.d/conda.sh \
+                /opt/conda/etc/profile.d/conda.sh; do
+    [ -f "$conda_sh" ] && source "$conda_sh" && break
 done
+EOF
+}
 
-echo ""
-echo "Waiting for all nodes to complete initialization..."
-wait
+# Function to stop Ray on all nodes
+stop_cluster() {
+    log_info "Stopping Ray on all nodes..."
 
-echo ""
-echo "Ray initialization commands have been sent to all nodes."
-echo "Logs have been saved to the '${log_dir}' directory."
-echo "To check status, see the log files, e.g.:"
-echo "cat ${log_dir}/ray_init_log.${head_node_addr}.txt"
+    if [ ! -f "${HOSTFILE}" ]; then
+        log_warn "Hostfile not found, stopping local Ray only"
+        ray stop --force 2>/dev/null || true
+        return
+    fi
 
-ray status
+    ALL_NODES=$(awk '!a[$1]++ {print $1}' ${HOSTFILE})
+
+    for node in ${ALL_NODES}; do
+        log_info "Stopping Ray on ${node}..."
+        ssh -n ${node} "$(get_conda_init_cmd) && conda activate ${CONDA_ENV_NAME} && ray stop --force" 2>/dev/null &
+    done
+
+    wait
+    log_info "Ray stopped on all nodes"
+}
+
+# Function to start Ray cluster
+start_cluster() {
+    # Check hostfile
+    if [ ! -f "${HOSTFILE}" ]; then
+        log_error "Hostfile not found: ${HOSTFILE}"
+        log_info "Please create a hostfile with one IP per line"
+        log_info "Example:"
+        echo "  192.168.1.100"
+        echo "  192.168.1.101"
+        echo "  192.168.1.102"
+        exit 1
+    fi
+
+    # Get head node (first line)
+    HEAD_NODE=$(awk 'NR==1 {print $1}' ${HOSTFILE})
+    ALL_NODES=$(awk '!a[$1]++ {print $1}' ${HOSTFILE})
+
+    log_info "Head node: ${HEAD_NODE}"
+    log_info "Ray port: ${PORT}"
+    log_info "Conda env: ${CONDA_ENV_NAME}"
+    echo ""
+    log_info "Nodes in cluster:"
+    echo "${ALL_NODES}"
+    echo ""
+
+    # Create log directory
+    mkdir -p "${LOG_DIR}"
+
+    # Stop existing Ray instances first
+    log_info "Stopping any existing Ray instances..."
+    stop_cluster
+    sleep 3
+
+    # Start head node first (synchronously)
+    log_info "Starting Ray HEAD on ${HEAD_NODE}..."
+    ssh -n ${HEAD_NODE} "CONDA_ENV_NAME=${CONDA_ENV_NAME} bash ${SCRIPT_DIR}/init_ray.sh ${HEAD_NODE} ${PORT} 0" \
+        > "${LOG_DIR}/ray_${HEAD_NODE}.log" 2>&1
+
+    if [ $? -ne 0 ]; then
+        log_error "Failed to start Ray HEAD. Check ${LOG_DIR}/ray_${HEAD_NODE}.log"
+        exit 1
+    fi
+    log_info "Ray HEAD started successfully"
+
+    # Wait for head to be ready
+    sleep 5
+
+    # Start worker nodes (asynchronously)
+    rank=1
+    for node in ${ALL_NODES}; do
+        if [ "${node}" == "${HEAD_NODE}" ]; then
+            continue
+        fi
+
+        log_info "Starting Ray WORKER on ${node} (rank ${rank})..."
+        ssh -n ${node} "CONDA_ENV_NAME=${CONDA_ENV_NAME} bash ${SCRIPT_DIR}/init_ray.sh ${HEAD_NODE} ${PORT} ${rank}" \
+            > "${LOG_DIR}/ray_${node}.log" 2>&1 &
+        rank=$((rank + 1))
+    done
+
+    # Wait for all workers
+    log_info "Waiting for all workers to join..."
+    wait
+    sleep 3
+
+    # Check cluster status
+    echo ""
+    log_info "Ray cluster initialization complete!"
+    log_info "Logs saved to: ${LOG_DIR}/"
+    echo ""
+    log_info "Cluster status:"
+    ssh -n ${HEAD_NODE} "$(get_conda_init_cmd) && conda activate ${CONDA_ENV_NAME} && ray status"
+}
+
+# Main
+case "${1}" in
+    --stop)
+        stop_cluster
+        ;;
+    *)
+        start_cluster
+        ;;
+esac
