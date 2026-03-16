@@ -712,10 +712,6 @@ def compute_forward_backward(
     # Prepare labels
     # Zero out padding tokens (input_ids <= 0) to avoid computing loss on them
     input_ids = input_ids * (input_ids > 0).to(torch.int64, non_blocking=True)
-    # Create labels: use input_ids where loss_mask==1, ignore_index where loss_mask==0
-    # This allows selective loss computation on specific tokens (e.g., excluding special tokens)
-    labels = input_ids * loss_mask + loss_fn.ignore_index * (1 - loss_mask)
-    
     # Forward pass
     with Timer("Fwd"):
         output = model(
@@ -732,11 +728,14 @@ def compute_forward_backward(
         # For causal LM, we predict token[i] given tokens[0:i], so labels need to be shifted
         # by one position: label[i] should correspond to input[i+1]
         pad = torch.full(
-            (labels.shape[0], 1),
+            (input_ids.shape[0], 1),
             loss_fn.ignore_index,
-            dtype=labels.dtype
-        ).to(device=labels.device, non_blocking=True)
-        labels = torch.cat([labels[:, 1:], pad], dim=-1)
+            dtype=input_ids.dtype
+        ).to(device=input_ids.device, non_blocking=True)
+        labels = torch.cat([input_ids[:, 1:], pad], dim=-1)
+        # Update labels: use input_ids where loss_mask==1, ignore_index where loss_mask==0
+        # This allows selective loss computation on specific tokens (e.g., excluding special tokens)
+        labels = labels * loss_mask + loss_fn.ignore_index * (1 - loss_mask)
         
         loss, per_token_loss = compute_loss_fn(logits, labels=labels)
         per_token_loss = per_token_loss.to(loss.device)
