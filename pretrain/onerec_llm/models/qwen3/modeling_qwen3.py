@@ -539,10 +539,20 @@ class Qwen3Model(Qwen3PreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-
-        causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        )
+        
+        cu_seqlens = flash_attn_kwargs.pop("cu_seqlens", None)
+        if cu_seqlens is not None:
+            cu_seqlens = cu_seqlens.to(dtype=torch.int32)
+            flash_attn_kwargs["cu_seq_lens_q"] = cu_seqlens
+            flash_attn_kwargs["cu_seq_lens_k"] = cu_seqlens
+            max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max().item()
+            flash_attn_kwargs["max_length_q"] = max_seqlen
+            flash_attn_kwargs["max_length_k"] = max_seqlen
+            causal_mask = None
+        else:
+            causal_mask = self._update_causal_mask(
+                attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+            )
 
         hidden_states = inputs_embeds
 

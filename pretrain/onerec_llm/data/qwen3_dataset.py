@@ -50,7 +50,6 @@ class Qwen3ChatCompletionDataset(IterableDataset):
             model_config = Qwen3Config.from_pretrained(self.kwargs.base_model_dir)
 
         self.pad_token_id = model_config.pad_token_id
-        self.eos_token_id = model_config.eos_token_id
         self.dataset, self.total_samples = self._build_source_dataset(self.sources)
 
         # for data_source monitor
@@ -65,6 +64,21 @@ class Qwen3ChatCompletionDataset(IterableDataset):
         self.im_end_token = "<|im_end|>"
         self.im_start_token_id = self.tokenizer.encode(self.im_start_token)[0]
         self.im_end_token_id = self.tokenizer.encode(self.im_end_token)[0]
+
+        # Derive chat template patterns from tokenizer instead of hardcoded token ids.
+        self.assistant_start_pattern = self.tokenizer.encode(
+            f"{self.im_start_token}assistant\n",
+            add_special_tokens=False,
+        )
+        self.im_end_pattern = self.tokenizer.encode(
+            f"{self.im_end_token}\n",
+            add_special_tokens=False,
+        )
+        if not self.im_end_pattern:
+            self.im_end_pattern = self.tokenizer.encode(
+                self.im_end_token,
+                add_special_tokens=False,
+            )
 
         self.add_think_pattern = self.kwargs.get("add_think_pattern", False)
         if self.add_think_pattern:
@@ -201,36 +215,44 @@ class Qwen3ChatCompletionDataset(IterableDataset):
             mask: Boolean mask indicating which tokens to compute loss on
         """
         if not start_pattern:
-            start_pattern = [151644, 77091, 198]
+            start_pattern = self.assistant_start_pattern
         if not end_pattern:
-            end_pattern = [151645, 198]
+            end_pattern = self.im_end_pattern
 
         masks = []
         for input_ids in batch_input_ids:
-            mask = []
-            assistant_start = []
-            assistant_end = []
-            to_mask = False
-            for _id in input_ids:
-                mask.append(int(to_mask))
-                if not to_mask:
-                    if _id in start_pattern:
-                        assistant_start.append(_id.item())
-                    else:
-                        assistant_start = []
-                    if assistant_start[-3:] == start_pattern:
-                        to_mask = True
-                        assistant_start = []
-                else:
-                    if _id in end_pattern:
-                        assistant_end.append(_id.item())
-                    else:
-                        assistant_end = []
-                    if assistant_end[-2:] == end_pattern:
-                        to_mask = False
-                        assistant_end = []
+            ids = input_ids.tolist()
+            mask = [0] * len(ids)
+            start_len = len(start_pattern)
+            end_len = len(end_pattern)
+            i = 0
+
+            while i <= len(ids) - start_len:
+                if ids[i:i + start_len] != start_pattern:
+                    i += 1
+                    continue
+
+                content_start = i + start_len
+                j = content_start
+                found_end = False
+                while j <= len(ids) - end_len:
+                    if ids[j:j + end_len] == end_pattern:
+                        found_end = True
+                        break
+                    j += 1
+
+                if not found_end:
+                    for k in range(content_start, len(ids)):
+                        mask[k] = 1
+                    break
+
+                for k in range(content_start, j):
+                    mask[k] = 1
+
+                i = j + end_len
+
             masks.append(mask)
-        return torch.tensor(masks)
+        return torch.tensor(masks, dtype=torch.long)
     
     def _get_rope_index_qwen3(
                                 self,
@@ -261,7 +283,11 @@ class Qwen3ChatCompletionDataset(IterableDataset):
                 logger.error(f"segment type is not text, skip: {segment}")
                 continue
         
-        segments_text += self.tokenizer.eos_token
+        # Note: do not use self.tokenizer.eos_token as it's always set to <im_end>
+        # References: 
+        # 1. https://huggingface.co/Qwen/Qwen3-8B/blob/main/tokenizer_config.json#L232
+        # 2. https://qwen.readthedocs.io/zh-cn/latest/getting_started/concepts.html#control-tokens
+        segments_text += self.tokenizer.pad_token
         
         # Tokenize
         inputs = self.tokenizer(
@@ -315,8 +341,8 @@ class Qwen3ChatCompletionDataset(IterableDataset):
         )
         
         # Add EOS token
-        text += self.tokenizer.eos_token
-        
+        text += self.tokenizer.pad_token
+
         # Tokenize
         inputs = self.tokenizer(
             text,
@@ -332,8 +358,8 @@ class Qwen3ChatCompletionDataset(IterableDataset):
         
         inputs["loss_mask"] = self._get_assistant_mask(
             input_ids,
-            start_pattern=[self.im_start_token_id, 872, 198],  # <|im_start|>assistant
-            end_pattern=[self.im_end_token_id, 198, self.im_end_token_id]  # <|im_end|>
+            start_pattern=self.assistant_start_pattern,
+            end_pattern=self.im_end_pattern,
         )
         
         # Mask EOS token
