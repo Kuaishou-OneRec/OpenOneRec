@@ -129,15 +129,21 @@ def apply_sid_to_pid_strategy(pid_info_list: List[Dict[str, int]], strategy: str
         raise ValueError(f"Unknown strategy: {strategy}. Must be 'most_popular_originally', 'most_popular_after_downsampling', or 'random'")
 
 
-def extract_ids_from_answer(answer: List[int]) -> Set[int]:
-    """
-    Extract all PIDs from answer field (metadata["answer_pid"]) or (metadata["answer_iid"])
+def extract_ids_from_answer(answer: list[int]) -> list[int]:
+    """Extract all PIDs from answer field, preserving original order.
 
-    Examples:
-        >>> extract_ids_from_answer([123, 456, 789])
-        {123, 456, 789}
+    Returns a deduplicated list that keeps the first occurrence order.
+
+    >>> extract_ids_from_answer([123, 456, 123, 789])
+    [123, 456, 789]
     """
-    return set([pid for pid in answer if pid != 0])
+    seen: set[int] = set()
+    correct_answers: list[int] = []
+    for pid in answer:
+        if pid != 0 and pid not in seen:
+            correct_answers.append(pid)
+            seen.add(pid)
+    return correct_answers
 
 
 def extract_first_id_from_answer(answer: List[int]) -> int:
