@@ -5,6 +5,7 @@ import json
 from typing import Dict, List, Any, Optional
 from vllm import LLM, SamplingParams
 from vllm.sampling_params import BeamSearchParams
+from benchmark.compact_beam_search import compact_beam_search
 
 from benchmark.base_generator import Generator, RayMixin, VllmMixin, DISABLE_OPTIMIZATIONS_FOR_TASKS
 from benchmark.checkpoint_utils import export_pt_to_safetensor
@@ -129,6 +130,9 @@ class VllmWorker:
         if not prompts:
             return ({}, {}, {})
 
+        if sampling_params.get("use_compact_beam_search") and not sampling_params.get("use_beam_search"):
+            raise ValueError("use_compact_beam_search requires beam search")
+
         # Determine whether to use BeamSearchParams or SamplingParams based on parameters
         if sampling_params.get("use_beam_search", False):
             # Beam search mode
@@ -141,7 +145,7 @@ class VllmWorker:
             # Sampling mode - remove parameters not belonging to SamplingParams
             # stop parameter is already included in the dict comprehension
             params_dict = {k: v for k, v in sampling_params.items()
-                          if k not in ["use_beam_search", "beam_width", "return_logprobs"]}
+                          if k not in ["use_beam_search", "beam_width", "return_logprobs", "use_compact_beam_search"]}
 
             # If return_logprobs is enabled, add logprobs parameter
             if sampling_params.get("return_logprobs", False):
@@ -179,7 +183,10 @@ class VllmWorker:
                     # Beam search needs to use beam_search method
                     # beam_search input format is [{"prompt": "text"}]
                     batch_prompt_dicts = [{"prompt": text} for text in batch_prompt_texts]
-                    batch_outputs = self.llm.beam_search(batch_prompt_dicts, sp)
+                    if sampling_params.get("use_compact_beam_search"):
+                        batch_outputs = compact_beam_search(self.llm, batch_prompt_dicts, sp)
+                    else:
+                        batch_outputs = self.llm.beam_search(batch_prompt_dicts, sp)
                 else:
                     # Sampling mode uses generate method
                     batch_outputs = self.llm.generate(batch_prompt_texts, sp)
@@ -237,6 +244,8 @@ class VllmWorker:
                         }
                 
             except Exception as e:
+                if sampling_params.get("use_compact_beam_search"):
+                    raise RuntimeError("Compact beam search failed; refusing empty-output fallback") from e
                 # When a single batch fails, return empty string and print detailed error
                 import traceback
                 print(f"\n[Worker {self.worker_id}] Batch {batch_idx}/{num_batches} generation failed:")
@@ -695,6 +704,9 @@ class RayVllmGenerator(RayMixin, VllmMixin, Generator):
             # Add stop parameter if specified
             if sampling_params_obj.stop:
                 sampling_params["stop"] = sampling_params_obj.stop
+
+        if use_beam_search:
+            sampling_params["use_compact_beam_search"] = kwargs.get("use_compact_beam_search", False)
 
         console.print(
             f"Starting generation...",

@@ -64,6 +64,7 @@ def main():
         # Generation parameters
         enable_thinking=prompt_config.enable_thinking,
         num_beams=generation_config.num_beams,
+        use_compact_beam_search=generation_config.use_compact_beam_search,
         num_return_sequences=generation_config.num_return_sequences,
         temperature=generation_config.temperature,
         top_p=generation_config.top_p,

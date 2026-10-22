@@ -1,5 +1,8 @@
 # Benchmark
 
+For an optional optimization of long-history, short-SID beam search, see
+[compact beam search](COMPACT_BEAM_SEARCH.md), including compatibility checks
+and a paired native/compact comparison command.
 
 ## Quick Start
 

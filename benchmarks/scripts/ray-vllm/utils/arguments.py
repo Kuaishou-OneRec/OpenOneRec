@@ -84,6 +84,10 @@ class InferenceConfig:
 @dataclass
 class GenerationConfig:
     """Text generation parameters (sampling, beam search)"""
+    use_compact_beam_search: bool = field(
+        default=False,
+        metadata={"help": "Use suffix-only beam state and lazy full-text decoding (vLLM 0.7.3, text inputs)"}
+    )
     # Beam search
     num_beams: Optional[int] = field(
         default=None,
