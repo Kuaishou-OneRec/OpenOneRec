@@ -4,7 +4,7 @@ Recommendation Task Utilities
 Functions for SID extraction and recommendation metrics computation.
 """
 
-from typing import Set, Dict, List, Any
+from typing import Iterable, Set, Dict, List, Any
 
 
 def extract_ids_from_answer(answer: str) -> list[str]:
@@ -162,7 +162,7 @@ def compute_position1_pass_at_k(
 
 def compute_recall_at_k(
     predicted_sids: List[str],
-    ground_truth_sids: Set[str],
+    ground_truth_sids: Iterable[str],
     k: int
 ) -> float:
     """
@@ -175,7 +175,7 @@ def compute_recall_at_k(
 
     Args:
         predicted_sids: List of predicted SIDs (already extracted from generations)
-        ground_truth_sids: Set of ground truth SIDs
+        ground_truth_sids: Iterable of ground truth SIDs
         k: Number of top predictions to consider
 
     Returns:
@@ -189,7 +189,8 @@ def compute_recall_at_k(
         >>> compute_recall_at_k(predicted_sids, ground_truth_sids, k=4)
         0.6667  # Still hit only 2, since 789 is not in top-4
     """
-    if not predicted_sids or not ground_truth_sids:
+    ground_truth_set = set(ground_truth_sids)
+    if not predicted_sids or not ground_truth_set:
         return 0.0
 
     # Take first k predicted SIDs
@@ -199,10 +200,10 @@ def compute_recall_at_k(
     predicted_sids_set = set(sid for sid in top_k_sids if sid)
 
     # Count how many ground truth SIDs are hit
-    hit_count = len(predicted_sids_set & ground_truth_sids)  # Set intersection
+    hit_count = len(predicted_sids_set & ground_truth_set)  # Set intersection
 
     # Calculate recall
-    recall = hit_count / len(ground_truth_sids)
+    recall = hit_count / len(ground_truth_set)
 
     return recall
 

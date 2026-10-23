@@ -12,6 +12,7 @@ from benchmark.console import console, warning_style
 from benchmark.tasks.v1_0.base_evaluator import BaseEval
 from benchmark.tasks.v1_0.recommendation import utils as utils_sid
 from benchmark.tasks.v1_0.recommendation import utils_by_pid as utils_pid
+from benchmark.tasks.v1_0.recommendation.collision_ranking import rank_pid_candidates
 
 
 class RecommendationEvaluator(BaseEval):
@@ -47,11 +48,26 @@ class RecommendationEvaluator(BaseEval):
 
         return metrics
 
+    def _has_all_required_metrics(self):
+        config = self.task_config.get("evaluation_config", {})
+        selected = config.get("select_k", "first_k")
+        previous = self.cached_metrics.get("select_k_strategy")
+        if selected == "pid_probability" or previous == "pid_probability":
+            if previous != selected:
+                return False
+            if self.cached_metrics.get("pid_probability_weight") != config.get("pid_probability_weight", 1.0):
+                return False
+            if self.cached_metrics.get("sid_to_pid_strategy") != config.get("sid_to_pid_strategy", "most_popular_after_downsampling"):
+                return False
+        return super()._has_all_required_metrics()
+
     def _select_generations_by_strategy(
         self,
         generations: List[str],
         logprobs: List[float],
-        strategy: str
+        strategy: str,
+        code_to_pid=None,
+        pid_probability_weight: float = 1.0
     ) -> List[str]:
         """
         Select and reorder generations based on the specified strategy
@@ -59,7 +75,9 @@ class RecommendationEvaluator(BaseEval):
         Args:
             generations: List of generation strings
             logprobs: List of cumulative logprobs for each generation
-            strategy: Selection strategy ('first_k' or 'top_k_by_logprobs')
+            strategy: 'first_k', 'top_k_by_logprobs', or 'pid_probability'
+            code_to_pid: Catalog required for collision-aware PID ranking
+            pid_probability_weight: Nonnegative weight on the empirical PID share
 
         Returns:
             Reordered list of generations
@@ -67,6 +85,11 @@ class RecommendationEvaluator(BaseEval):
         Raises:
             ValueError: If strategy is 'top_k_by_logprobs' but logprobs data is invalid
         """
+        if strategy == "pid_probability":
+            if code_to_pid is None:
+                raise ValueError("PID probability ranking requires a SID-to-PID catalog")
+            ranked = rank_pid_candidates(generations, logprobs, code_to_pid, pid_probability_weight)
+            return [generations[candidate.index] for candidate in ranked]
         if strategy == "first_k":
             # Keep original order
             return generations
@@ -99,7 +122,7 @@ class RecommendationEvaluator(BaseEval):
         else:
             raise ValueError(
                 f"Unknown selection strategy: '{strategy}'. "
-                f"Supported strategies: 'first_k', 'top_k_by_logprobs'"
+                f"Supported strategies: 'first_k', 'top_k_by_logprobs', 'pid_probability'"
             )
 
     def _evaluate_single_mode(
@@ -198,7 +221,9 @@ class RecommendationEvaluator(BaseEval):
             selected_generations = self._select_generations_by_strategy(
                 generations=generations,
                 logprobs=logprobs,
-                strategy=select_k_strategy
+                strategy=select_k_strategy,
+                code_to_pid=code_to_pid,
+                pid_probability_weight=self.task_config.get("evaluation_config", {}).get("pid_probability_weight", 1.0)
             )
 
             # Extract predicted IDs from selected generations
@@ -329,6 +354,12 @@ class RecommendationEvaluator(BaseEval):
         evaluation_mode = evaluation_config.get('evaluation_mode', 'both')
         sid_to_pid_strategy = evaluation_config.get('sid_to_pid_strategy', 'most_popular_after_downsampling')
 
+        if select_k_strategy == "pid_probability":
+            if evaluation_mode not in ("pid", "both"):
+                raise ValueError("pid_probability requires PID or both evaluation modes")
+            if sid_to_pid_strategy != "most_popular_after_downsampling_deterministic":
+                raise ValueError("pid_probability requires most_popular_after_downsampling_deterministic resolution")
+
         # Load PID mapping if needed
         code_to_pid = None
         if evaluation_mode in ("pid", "both"):
@@ -373,7 +404,7 @@ class RecommendationEvaluator(BaseEval):
                 k_values=k_values,
                 evaluation_mode=mode_name,
                 select_k_strategy=select_k_strategy,
-                code_to_pid=code_to_pid if mode_name == "pid" else None,
+                code_to_pid=code_to_pid if mode_name == "pid" or select_k_strategy == "pid_probability" else None,
                 sid_to_pid_strategy=sid_to_pid_strategy if mode_name == "pid" else "most_popular"
             )
 
@@ -421,6 +452,8 @@ class RecommendationEvaluator(BaseEval):
         # Record configuration
         metrics["select_k_strategy"] = select_k_strategy
         metrics["evaluation_mode"] = evaluation_mode
+        if select_k_strategy == "pid_probability":
+            metrics["pid_probability_weight"] = evaluation_config.get("pid_probability_weight", 1.0)
         if evaluation_mode in ("pid", "both"):
             metrics["sid_to_pid_strategy"] = sid_to_pid_strategy
 
